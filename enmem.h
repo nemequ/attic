@@ -102,7 +102,7 @@
  *    if (tmp == NULL)
  *      free(ptr);
  *    else
- *      ptr = tmp;                           -> ptr = enrealloc(ptr, T, nmemb);
+ *      ptr = tmp;                           -> ptr = enresize(ptr, T, nmemb);
  *  * free(ptr);
  *    ptr = NULL;                            -> ptr = enfree(ptr);
  *
