@@ -2,10 +2,11 @@
  * Code from <https://github.com/nemequ/attic/>
  *
  * Originally written by Evan Nemerson <evan@nemerson.com>.  This is a
- * work-in-progress; feedback is appreciated.  I may eventually move
- * this code into Portable Snippets
- * (<https://github.com/nemequ/portable-snippets/>), so if you can't
- * find the latest version in the repo above try there.
+ * work-in-progress; feedback is appreciated, especially bug reports
+ * and constructive criticism.  I may eventually move this code into
+ * Portable Snippets (<https://github.com/nemequ/portable-snippets/>),
+ * so if you can't find the latest version in the repo above try
+ * there.
  *
  * To the extent possible under law, the author(s) have dedicated all
  * copyright and related and neighboring rights to this software to
@@ -30,6 +31,66 @@
  *    nmemb (for a good overview of this problem see
  *    <http://lteo.net/blog/2014/10/28/reallocarray-in-openbsd-integer-overflow-detection-for-free/>)
  *
+ * This is accomplished largely by using types in the API instead of
+ * length in bytes, and casting to the proper type withing the API
+ * instead of relying on void* and implicit conversions. For example,
+ * in standard C the malloc function looks like:
+ *
+ *   void* malloc(size_t size);
+ *
+ * For ennew(), on the other hand, we replace the size parameter with
+ * a type and cast the result, so we end up with an API that looks
+ * like:
+ *
+ *   T* ennew(T type);
+ *
+ * Obviously that's not a real prototype; we use a macro which looks like:
+ *
+ *   #define ennew(T) ((T*) malloc(sizeof(T)))
+ *
+ * Or, in C++:
+ *
+ *   #define ennew(T) static_cast<T*>(malloc(sizeof(T)))
+ *
+ * Other functions may be a bit more complex, but the basic idea
+ * remains the same: do whatever we can to get the compiler to emit a
+ * diagnostic when you do something wrong. For example, consider these
+ * two lines:
+ *
+ *   int* a = malloc(sizeof(char));
+ *   int* b = ennew(char);
+ *
+ * Compilers will happily accept the first line since malloc returns a
+ * void*, which is then implicitly converted to an int* when assigning
+ * to a. There is a good chance this will cause problems later since
+ * you've only allocated enough room for a char (generally 1 byte) but
+ * you're treating it as an int (generally 4 bytes).
+ *
+ * The second line, however, will cause most compilers to generate a
+ * warning or error about converting a char* to an int*.
+ *
+ * Of course, you'll often want to allocate space for multiple
+ * objects. That's easy to do with ennewa() (note the "a" suffix):
+ *
+ *   int* c = ennewa(int, 512);
+ *
+ * Which will allocate an array of 512 integers and automatically cast
+ * the result to the correct type. Not only does this provide better
+ * type safety than `malloc(sizeof(int) * 512)`, it is also easier to
+ * use, and protects against integer overflow issues.
+ *
+ * There are also variants of ennew and ennewa, called ennew0 and
+ * ennewa0, which return memory set to 0, as well as safer
+ * alternatives to realloc (enrealloc and enresize).  There is even a
+ * version of free which returns NULL, which provides a convenient way
+ * to clear a pointer (set it to NULL) instead of leaving it pointing
+ * at an invalid address.
+ *
+ *********************************************************************
+ *
+ * To use this, just drop the header into your project and include
+ * it. No build system magic is required.
+ *
  * Relationship to standard malloc/calloc/realloc/free:
  *
  *  * malloc(sizeof(T))                      -> ennew(T);
@@ -44,39 +105,6 @@
  *      ptr = tmp;                           -> ptr = enrealloc(ptr, T, nmemb);
  *  * free(ptr);
  *    ptr = NULL;                            -> ptr = enfree(ptr);
- *
- * As far as I can tell, the only (valid) thing this API really makes
- * harder is mixing types. For example, if you want to make a single
- * allocation for some metadata struct and the data itself (such as an
- * image with width and height).  It's a bit of a corner case, though,
- * and IMHO the additional safety for most use cases vastly outweighs
- * having to do something like `(Image*) ennewa(char, len)` instead of
- * just `malloc(len)`, especially since calculating len is already
- * likely non-trivial since you probably need to take struct size,
- * alignment, and padding into account.
- *
- * In general, all you need to do is #include this file. If you want
- * to use custom functions instead of malloc/calloc/realloc/free you
- * can define EN_MALLOC/CALLOC/REALLOC/FREE first.
- *
- * The API should work with any compiler, but some compilers (GCC,
- * clang, ICC, etc.) can provide more checks due to extensions like
- * typeof() and __builtin_types_compatible_p().
- *
- * For best results you should also include Hedley
- * (<https://nemequ.github.io/hedley>) before including this file.
- *
- * Partial TODO:
- *
- *  * Clean up.
- *  * Figure out which other compilers and versions support
- *    __builtin_types_compatible_p (IIRC ARM does...).
- *  * Look at what other compilers (suncc, TI, IBM, etc.) offer in the
- *    way of extensions which could help.
- *  * Add annotations (GCC-style attributes and SAL) as appropriate.
- *  * Hard dependency on Hedley? Would make a bunch of stuff easier,
-      and clean things up a bit.
- *  * C11 implementation of EN_CHECK_TYPES_AND_EXEC, using _Generic?
  *
  *********************************************************************
  *
@@ -111,9 +139,47 @@
  *
  *   On some compilers, namely those which implement GNU extensions
  *   such as GCC and clang as well as C++ compilers, the return value
- *   is of the same type as the input, so you should get a warning if
+ *   has the same type as the input, so you should get a warning if
  *   you try to do something like `x = enfree(y)` when x and y are
- *   different types. Otherwise T is void.
+ *   different types. Otherwise T is void and you're on your own.
+ *
+ *********************************************************************
+ *
+ * As far as I can tell, the only (valid) thing this API really makes
+ * harder is mixing types. For example, if you want to make a single
+ * allocation for some metadata struct and the data itself (such as an
+ * image with width and height fields).  It's a bit of a corner case,
+ * though, and IMHO the additional safety for most use cases vastly
+ * outweighs having to do something like `(Image*) ennewa(char, len)`
+ * instead of just `malloc(len)`, especially since calculating len is
+ * already likely non-trivial since you probably need to take struct
+ * size, alignment, and padding into account.
+ *
+ * In general, all you need to do is #include this file. If you want
+ * to use custom functions instead of malloc/calloc/realloc/free you
+ * can define EN_MALLOC/CALLOC/REALLOC/FREE first.
+ *
+ * The API should work with any compiler, but some compilers (GCC,
+ * clang, ICC, etc.) can provide more checks due to extensions like
+ * typeof() and __builtin_types_compatible_p().
+ *
+ * For best results you should also include Hedley
+ * (<https://nemequ.github.io/hedley>) before including this file, but
+ * it is not required.
+ *
+ * Partial TODO:
+ *
+ *  * Clean up.
+ *  * Figure out which other compilers and versions support
+ *    __builtin_types_compatible_p (IIRC ARM does...).
+ *  * Look at what other compilers (suncc, TI, IBM, etc.) offer in the
+ *    way of extensions which could help.
+ *  * Add annotations (GCC-style attributes and SAL) as appropriate.
+ *  * Hard dependency on Hedley? Would make a bunch of stuff easier,
+ *    and clean things up a bit.
+ *  * C11 implementation of EN_CHECK_TYPES_AND_EXEC, using _Generic?
+ *    Not sure it's possible, but I'd like to spend some time thinking
+ *    about it.
  */
 
 #if !defined(ENMEM_H)
