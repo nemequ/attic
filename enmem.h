@@ -166,20 +166,6 @@
  * For best results you should also include Hedley
  * (<https://nemequ.github.io/hedley>) before including this file, but
  * it is not required.
- *
- * Partial TODO:
- *
- *  * Clean up.
- *  * Figure out which other compilers and versions support
- *    __builtin_types_compatible_p (IIRC ARM does...).
- *  * Look at what other compilers (suncc, TI, IBM, etc.) offer in the
- *    way of extensions which could help.
- *  * Add annotations (GCC-style attributes and SAL) as appropriate.
- *  * Hard dependency on Hedley? Would make a bunch of stuff easier,
- *    and clean things up a bit.
- *  * C11 implementation of EN_CHECK_TYPES_AND_EXEC, using _Generic?
- *    Not sure it's possible, but I'd like to spend some time thinking
- *    about it.
  */
 
 #if !defined(ENMEM_H)
@@ -239,32 +225,34 @@
 #  define EN_STATIC_ASSERT
 #endif
 
+/* If you're getting an error because of this macro, it's because the
+   type isn't what was expected.  On some compilers we can make this
+   pretty obvious, but on others the error message will be a bit
+   cryptic. */
 #if defined(__cplusplus)
-template<typename T> static T* enchktype_(T* ptr, T* stmt) { (void) ptr; return stmt; }
-#elif defined(EN_TYPES_COMPATIBLE_P) && defined(EN_STATIC_ASSERT) && 0
-#  define EN_CHECK_TYPES_AND_EXEC(t1, t2, stmt) (__extension__ ({ \
-       _Static_assert(__builtin_types_compatible_p(t1, t2), EN_INCOMPATIBLE_TYPES); \
-       (stmt); \
-     }))
+template<typename T> static T* enchecktype_(T* ptr) { return ptr; }
+#define EN_CHECK_TYPE(T, ptr) (enchecktype_<T>(ptr))
+#elif defined(EN_TYPES_COMPATIBLE_P) && defined(EN_STATIC_ASSERT)
+#define EN_CHECK_TYPE(T, ptr) (__extension__ ({ \
+	_Static_assert(__builtin_types_compatible_p(T, __typeof__((ptr)[0])), EN_INCOMPATIBLE_TYPES); \
+	(ptr); \
+      }))
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define EN_CHECK_TYPE(T, ptr) ((T*) _Generic(*(ptr), T: (ptr)))
 #elif defined(EN_TYPES_COMPATIBLE_P)
-/* If you're getting an error from this about an array having a
- * negative size, it's because your types don't match. This is just a
- * trick to get the compiler to emit an error at compile-time; newer
- * compilers have more descriptive error messages, but this is the
- * best we could do for your compiler. */
-#  define EN_CHECK_TYPES_AND_EXEC(t1, t2, stmt) (__extension__ ({ \
-       ((void)sizeof(char[1 - 2*!(__builtin_types_compatible_p(t1, t2))])); \
-       (stmt); \
-     }))
+#define EN_CHECK_TYPE(T, ptr) (__extension__ ({ \
+	((void)sizeof(char[1 - 2*!(__builtin_types_compatible_p(T, __typeof__((ptr)[0])))])); \
+	(ptr); \
+      }))
 #else
-#  define EN_CHECK_TYPES_AND_EXEC(t1, t2, stmt) (stmt)
+#define EN_CHECK_TYPE(T, ptr) (ptr)
 #endif
 
 #if defined(__cplusplus)
   template<typename T>
   static T* enfree(T* ptr) {
     free(static_cast<void*>(ptr));
-    return NULL;
+    return static_cast<T*>(NULL);
   }
 #elif defined(__GNUC__)
 #  define enfree(ptr) ((__typeof__(*ptr)*) (EN_FREE(ptr), NULL))
@@ -334,9 +322,9 @@ static void* enrealloc_(void* ptr, size_t size, size_t nmemb) {
   return EN_REALLOC(ptr, alloc_size);
 }
 #if defined(__cplusplus)
-#  define enrealloc(ptr, T, nmemb) enchktype_(ptr, static_cast<T*>(enrealloc_(ptr, sizeof(T), nmemb)))
+#  define enrealloc(ptr, T, nmemb) static_cast<T*>(enrealloc_(static_cast<void*>(EN_CHECK_TYPE(T, (ptr))), sizeof(T), nmemb))
 #else
-#  define enrealloc(ptr, T, nmemb) EN_CHECK_TYPES_AND_EXEC(__typeof__(ptr[0]), T, ((T*) enrealloc_(ptr, sizeof(T), nmemb)))
+#  define enrealloc(ptr, T, nmemb) ((T*) enrealloc_(EN_CHECK_TYPE(T, ptr), sizeof(T), nmemb))
 #endif
 
 static void* enresize_(void* ptr, size_t size, size_t nmemb) {
@@ -346,9 +334,9 @@ static void* enresize_(void* ptr, size_t size, size_t nmemb) {
   return tmp_;
 }
 #if defined(__cplusplus)
-#  define enresize(ptr, T, nmemb) enchktype_(ptr, static_cast<T*>(enresize_(ptr, sizeof(T), nmemb)))
+#  define enresize(ptr, T, nmemb) static_cast<T*>(enresize_(static_cast<void*>(EN_CHECK_TYPE(T, (ptr))), sizeof(T), nmemb))
 #else
-#  define enresize(ptr, T, nmemb) EN_CHECK_TYPES_AND_EXEC(__typeof__(ptr[0]), T, ((T*) enresize_(ptr, sizeof(T), nmemb)))
+#  define enresize(ptr, T, nmemb) ((T*) enresize_(EN_CHECK_TYPE(T, ptr), sizeof(T), nmemb))
 #endif
 
 #endif /* !defined(ENMEM_H) */
